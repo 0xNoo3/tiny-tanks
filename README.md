@@ -9,20 +9,20 @@ intercepted in the page and answered by an emulation of the old multiplayer.gg
 backend (accounts, rooms, shop, level vault). The game belongs to its creator;
 this exists so it can still be played.
 
-## Two ways to play
+## How playing works
 
-**Peer-to-peer (upstream Flashback behaviour).** Open the page, share the URL
-(`?room=yourcode` for a private room). One player's browser acts as the
-backend and the others connect to it over WebRTC. Needs no server, but direct
-browser-to-browser connections fail for players on mobile data or behind
-carrier-grade NAT - the other player simply never appears.
+The game runs **only while the owner's server is up**. You start
+`npm run relay` on your PC, expose it with a free tunnel, and share a link
+that includes the server address (`?room=lobby&relay=<host>`). Everyone's
+browser connects to your server. Match traffic goes through the server too
+(works for everyone) or, if you start it with `MODE=p2p`, browser-to-browser
+over WebRTC for the lowest ping.
 
-**Owner-run server (this fork).** You run `npm run relay` on your PC when you
-want to play, expose it with a free tunnel, and share a link with `&relay=`.
-Everyone connects to your server, which works through any NAT, firewall or
-country. The server also *is* the game backend: accounts, XP, coins, unlocks
-and maps live in a file on your machine, browsers can't overwrite them, and
-you edit them from an admin console in the terminal.
+The server is also the game's backend: accounts, XP, coins, unlocks and maps
+live in a file on your machine. Browsers can't host, can't overwrite records,
+and you edit anything from an admin panel in your browser (or the terminal). Opening the page
+without the server (or with a stale link) shows an "offline" message instead
+of the game.
 
 See [relay/README.md](relay/README.md) for the play-night steps and the admin
 commands.
@@ -49,13 +49,12 @@ one, point Cloudflare Pages or Netlify at the repo instead: build command
 npm install
 npm run dev          # http://localhost:5173 (add ?room=x&relay=localhost:8787 to use a local server)
 npm run relay        # owner-run server + admin console on port 8787
-npm run relay:plain  # relay only, no game backend (peer-hosted, just routed through the server)
 npm test
 npm run build
 ```
 
-Useful query params: `?room=<code>`, `&relay=<host>` (use the server),
-`&debug` (connection and packet log in the browser console).
+Query params: `?room=<code>` (must match the server's `ROOM`), `&relay=<host>`
+(required), `&debug` (connection and packet log in the browser console).
 
 ## Repository layout
 

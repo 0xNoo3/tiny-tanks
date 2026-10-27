@@ -1,5 +1,5 @@
 import { createSession, trysteroBridge, VirtualNetwork, websocketBridge } from "../../flashnet/index.ts";
-import { joinRoom, selfId } from "@trystero-p2p/mqtt";
+import { joinRoom, selfId as p2pId } from "@trystero-p2p/mqtt";
 import { GAME_VERSION } from "./backend.ts";
 import { BACKEND_ENDPOINT, tinyTanks } from "./game.ts";
 import { RtmfpRouter } from "./rtmfp.ts";
@@ -24,7 +24,7 @@ declare global {
 
 const params = new URLSearchParams(location.search);
 const roomCode = params.get("room") ?? "lobby";
-const relay = params.get("relay"); // hosted relay (see relay/server.mjs); omit for peer-to-peer
+const relay = params.get("relay"); // the owner's server (relay/authority.mjs) - required
 const debug = params.has("debug");
 const VAULT_KEY = "tiny-tanks.vault.v1";
 const SWF_URL = "http://www.multiplayer.gg/tt/TinyTanksLive.swf";
@@ -151,44 +151,156 @@ class BackendClient {
 
 // -- session --------------------------------------------------------------------
 
-/**
- * ICE servers for the WebRTC peer connections. Trystero's defaults are
- * STUN-only, which fails for players behind carrier-grade / symmetric NAT
- * (mobile data, many home ISPs). A TURN relay lets those players connect.
- *
- * The Open Relay Project entries below are free and need no signup, but they
- * are shared and rate-limited. For reliable play, create a free account at
- * https://www.metered.ca/tools/openrelay/ (or any TURN provider) and replace
- * the TURN entries with your own URLs, username and credential.
- */
-const rtcConfig: RTCConfiguration = {
-  iceServers: [
-    { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
-    { urls: "stun:stun.relay.metered.ca:80" },
-    {
-      urls: [
-        "turn:global.relay.metered.ca:80",
-        "turn:global.relay.metered.ca:80?transport=tcp",
-        "turn:global.relay.metered.ca:443",
-        "turns:global.relay.metered.ca:443?transport=tcp",
-      ],
-      username: "openrelayproject",
-      credential: "openrelayproject",
-    },
-  ],
-};
+/** Peer id relay/authority.mjs joins with; the lowest possible, so it always hosts. */
+const AUTHORITY_ID = "00000000";
+
+/** Replace the player area with a message and stop - the game only runs through the owner's server. */
+function halt(title: string, detail: string): never {
+  const slot = document.getElementById("player-slot")!;
+  slot.innerHTML = "";
+  const box = document.createElement("div");
+  box.style.cssText =
+    "margin:auto;max-width:28rem;padding:2rem;text-align:center;color:#d7e8ee;font:15px/1.6 system-ui,sans-serif";
+  const h = document.createElement("h1");
+  h.style.cssText = "font-size:1.4rem;margin:0 0 0.6rem";
+  h.textContent = title;
+  const p = document.createElement("p");
+  p.style.cssText = "margin:0;color:#a8b8c0";
+  p.textContent = detail;
+  box.append(h, p);
+  slot.appendChild(box);
+  throw new Error(`[tiny-tanks] ${title}`);
+}
+
+if (!relay) {
+  halt("Tiny Tanks is offline", "This game runs only while the host's server is up. Ask the host for tonight's link - it includes the server address.");
+}
+
+/** The server's base URL for plain HTTP (its GET / describes the game mode). */
+function httpUrl(host: string): string {
+  const trimmed = host.trim().replace(/\/+$/, "");
+  if (/^wss?:\/\//.test(trimmed)) return trimmed.replace(/^ws/, "http");
+  if (/^https?:\/\//.test(trimmed)) return trimmed;
+  const local = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(trimmed);
+  return `${local ? "http" : "https"}://${trimmed}`;
+}
+
+// First contact: the server says which room it hosts and where gameplay packets
+// should travel ("relay": through it; "p2p": browser-to-browser over WebRTC).
+const info = await fetch(httpUrl(relay), { signal: AbortSignal.timeout(8000), cache: "no-store" })
+  .then((response) => response.json() as Promise<{ game?: string; room?: string; mode?: string }>)
+  .catch(() => halt("Can't reach the server", `No answer from ${relay}. The host may have stopped the server, or the link is from an earlier session.`));
+if (info.game !== "tiny-tanks") halt("That's not a Tiny Tanks server", `${relay} answered, but it isn't running the Tiny Tanks server.`);
+if (info.room && info.room !== roomCode) {
+  halt("Wrong room", `This link says room "${roomCode}" but the server hosts "${info.room}". Ask the host for the current link.`);
+}
+const gameplayMode: "relay" | "p2p" = info.mode === "p2p" ? "p2p" : "relay";
 
 const net = new VirtualNetwork({ debug });
-const bridge = relay
-  ? await websocketBridge({ relay, room: roomCode, debug })
-  : trysteroBridge({ selfId, room: joinRoom({ appId: "flashback-tiny-tanks", rtcConfig }, roomCode) });
-if (debug) console.log("[tiny-tanks] transport:", relay ? `relay ${relay}` : "peer-to-peer (WebRTC)");
+const bridge = await Promise.race([
+  websocketBridge({ relay, room: roomCode, debug }),
+  new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 10_000)),
+]).catch(() => halt("Can't reach the server", `No answer from ${relay}. The host may have stopped the server, or the link is from an earlier session.`));
+if (debug) console.log("[tiny-tanks] accounts via", relay, "- gameplay:", gameplayMode);
 const session = await createSession(tinyTanks({ debug }), {
   net,
   bridge,
   settleMs: 4000,
 });
-const router = new RtmfpRouter({ net, bridge: session.bridge, debug });
+// Only the owner's server may host. If it isn't in the room (plain relay, or
+// the authority died) this page would have elected itself - refuse instead,
+// so accounts never end up owned by a browser.
+if (session.hostId !== AUTHORITY_ID) {
+  session.leave();
+  halt("The server isn't running", "The relay answered, but the Tiny Tanks server behind it is down. Ask the host to start it (npm run relay) and reload.");
+}
+session.on("host-changed", (hostId) => {
+  if (hostId !== AUTHORITY_ID) location.reload(); // server went away mid-session: come back to the gate
+});
+
+/**
+ * Can this browser do peer-to-peer? Gather STUN candidates from two servers:
+ * none at all means UDP/WebRTC is blocked; the same local port mapped to
+ * different public ports means a symmetric NAT (direct connections fail
+ * without TURN). Reported to the server so the owner can see who would be
+ * stuck in p2p mode. Runs in the background; never delays the game.
+ */
+async function probeNat(): Promise<"open" | "symmetric" | "blocked" | "unknown"> {
+  if (typeof RTCPeerConnection === "undefined") return "blocked";
+  const pc = new RTCPeerConnection({
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }],
+  });
+  const mapped = new Map<string, Set<number>>(); // local addr:port -> public ports seen
+  try {
+    pc.createDataChannel("probe");
+    const done = new Promise<void>((resolve) => {
+      pc.onicecandidate = (event) => {
+        const c = event.candidate;
+        if (!c) return resolve();
+        if (c.type === "srflx" && c.relatedAddress && c.relatedPort !== null && c.port !== null) {
+          const key = `${c.relatedAddress}:${c.relatedPort}`;
+          if (!mapped.has(key)) mapped.set(key, new Set());
+          mapped.get(key)!.add(c.port);
+        }
+      };
+      setTimeout(resolve, 6000);
+    });
+    await pc.setLocalDescription(await pc.createOffer());
+    await done;
+  } catch {
+    return "unknown";
+  } finally {
+    pc.close();
+  }
+  if (mapped.size === 0) return "blocked";
+  for (const ports of mapped.values()) if (ports.size > 1) return "symmetric";
+  return "open";
+}
+void probeNat().then((nat) => {
+  if (debug) console.log("[tiny-tanks] nat probe:", nat);
+  bridge.report({ nat });
+});
+/**
+ * Where the match itself (tank positions, shots - the emulated Cirrus streams)
+ * travels. "relay": over the same connection as everything else, through the
+ * server. "p2p": a second, browser-to-browser WebRTC mesh; the room name is
+ * scoped to this server so two owners' games never meet. STUN-only WebRTC
+ * fails behind carrier-grade NAT, hence the TURN entries; the Open Relay
+ * Project ones are free but shared - a metered.ca account gives you your own.
+ */
+const gameplayBridge =
+  gameplayMode === "p2p"
+    ? trysteroBridge({
+        selfId: p2pId,
+        room: joinRoom(
+          {
+            appId: "tiny-tanks-gameplay",
+            rtcConfig: {
+              iceServers: [
+                { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
+                { urls: "stun:stun.relay.metered.ca:80" },
+                {
+                  urls: [
+                    "turn:global.relay.metered.ca:80",
+                    "turn:global.relay.metered.ca:80?transport=tcp",
+                    "turn:global.relay.metered.ca:443",
+                    "turns:global.relay.metered.ca:443?transport=tcp",
+                  ],
+                  username: "openrelayproject",
+                  credential: "openrelayproject",
+                },
+              ],
+            },
+          },
+          `${roomCode}@${relay}`,
+        ),
+      })
+    : session.bridge;
+if (debug && gameplayMode === "p2p") {
+  gameplayBridge.on("join", (peerId) => console.log("[tiny-tanks] p2p peer joined:", peerId));
+  gameplayBridge.on("leave", (peerId) => console.log("[tiny-tanks] p2p peer left:", peerId));
+}
+const router = new RtmfpRouter({ net, bridge: gameplayBridge, debug });
 const backendProxy = session.ruffleConfig().socketProxy.find(
   (proxy) => `${proxy.host}:${proxy.port}` === BACKEND_ENDPOINT,
 );

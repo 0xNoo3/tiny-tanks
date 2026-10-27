@@ -81,6 +81,16 @@ export class TinyTanksServer implements GameServer {
     return new Set(this.#conns.keys());
   }
 
+  /** Connected peers and the account names each has logged into this session. */
+  get online(): Array<{ playerId: string; accounts: string[] }> {
+    return [...this.#conns.keys()].map((playerId) => ({
+      playerId,
+      accounts: [...this.#owners]
+        .filter(([, peers]) => peers.has(playerId))
+        .map(([key]) => this.#backend.accounts.get(key)?.name ?? key),
+    }));
+  }
+
   /** Call after editing `backend` directly: replicate state and push updated vaults to their owners. */
   refresh(): void {
     this.#changed();

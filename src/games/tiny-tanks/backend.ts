@@ -41,6 +41,12 @@ export interface Account {
   referrals: number;
   coins: number;
   premium: number;
+  /**
+   * The game's VIP flag (Chaz's "special" players): 1 shows the in-game
+   * "change title" button and marks the player's rooms/maps in the lobby.
+   * Only the server operator sets it; it also gates the title request below.
+   */
+  special: number;
   unlocks: number[];
   itemsinuse: string;
   customtitle: string;
@@ -131,6 +137,7 @@ export function newAccount(id: number, name: string, password: string): Account 
     referrals: 0,
     coins: 0,
     premium: 0,
+    special: 0,
     unlocks: [],
     itemsinuse: DEFAULT_SETUP,
     customtitle: "",
@@ -310,8 +317,12 @@ export class TinyTanksBackend {
         return this.#buy(params);
       case 9:
         return { body: signed([["code", this.account(params.usernameoremail) ? 0 : 1]]) };
-      case 11:
+      case 11: {
+        // Titles are operator-controlled: only accounts flagged "special" may set their own.
+        const account = this.account(params.username);
+        if (account && !account.special) return { body: signed([["code", 2]]) };
         return this.#update(params, (account) => (account.customtitle = safeUnescape(params.usertitle ?? "").slice(0, 40)));
+      }
       case 12:
         return this.#update(params, (account) => (account.friendlist = params.friendlist ?? ""));
       default:
@@ -364,7 +375,7 @@ export class TinyTanksBackend {
       ["referrals", account?.referrals ?? 0],
       ["id", account?.id ?? 0],
       ["weekrefs", 0],
-      ["special", 0],
+      ["special", account?.special ? 1 : 0],
       ["customtitle", account?.customtitle ?? ""],
       ["updatecounter", account?.updatecounter ?? 0],
       ["minutesplayed", account?.minutesplayed ?? 0],
@@ -650,6 +661,7 @@ function sanitizeAccount(value: unknown): Account | null {
     referrals: num("referrals"),
     coins: num("coins"),
     premium: num("premium"),
+    special: num("special") ? 1 : 0,
     unlocks: Array.isArray(input.unlocks) ? input.unlocks.map(Number).filter((item) => item in ITEM_COSTS) : [],
     itemsinuse: typeof input.itemsinuse === "string" ? input.itemsinuse : DEFAULT_SETUP,
     customtitle: typeof input.customtitle === "string" ? input.customtitle.slice(0, 40) : "",

@@ -24,18 +24,37 @@ import { createHash, randomBytes } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 
 const MAX_PAYLOAD = 1024 * 1024
-const PING_MS = 25_000
+/** Ping every connection this often: measures round-trip time and detects dead sockets. */
+const PING_MS = Number(process.env.RELAY_PING_MS) || 5000
+/** Missed pongs in a row before a connection is considered gone (~20 s at the default). */
+const MAX_MISSED = 4
+const NAT_KINDS = new Set(['open', 'symmetric', 'blocked', 'unknown'])
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 
 /** room code -> Map<peerId, Peer> */
 export const rooms = new Map()
 
+/** Live stats for a connected browser: ping to this server and what its page reported. */
+export function peerStats(room, peerId) {
+  const peer = rooms.get(room)?.get(peerId)
+  if (!(peer instanceof SocketPeer)) return null
+  return { rtt: peer.rtt, nat: peer.info.nat ?? 'unknown', connectedAt: peer.connectedAt }
+}
+
 /** Start the relay. Returns the http server (call .close() to stop). */
-export function startRelay({ port = Number(process.env.PORT) || 8787, log = defaultLog } = {}) {
+export function startRelay({ port = Number(process.env.PORT) || 8787, log = defaultLog, info = () => ({}), onRequest = null } = {}) {
   const http = createServer((req, res) => {
+    // Anything but the root is the caller's (the admin panel lives there).
+    if (onRequest && new URL(req.url ?? '/', 'http://relay').pathname !== '/') {
+      if (onRequest(req, res)) return
+      res.writeHead(404, { 'content-type': 'text/plain' })
+      res.end('not found')
+      return
+    }
+    // GET / is the page's first contact: it learns the game mode here before connecting.
     const stats = [...rooms].map(([room, peers]) => ({ room, players: peers.size }))
-    res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' })
-    res.end(JSON.stringify({ ok: true, service: 'flashback-relay', rooms: stats }))
+    res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' })
+    res.end(JSON.stringify({ ok: true, service: 'flashback-relay', ...info(), rooms: stats }))
   })
 
   http.on('upgrade', (req, socket, head) => {
@@ -62,9 +81,10 @@ export function startRelay({ port = Number(process.env.PORT) || 8787, log = defa
     for (const members of rooms.values()) {
       for (const peer of members.values()) {
         if (!(peer instanceof SocketPeer)) continue
-        if (!peer.alive) { peer.destroy(); continue }
-        peer.alive = false
-        peer.sendFrame(0x9, Buffer.alloc(0))
+        if (peer.missed >= MAX_MISSED) { peer.destroy(); continue }
+        peer.missed++
+        peer.pingSentAt = Date.now()
+        peer.sendFrame(0x9, Buffer.from(String(peer.pingSentAt)))
       }
     }
   }, PING_MS)
@@ -172,7 +192,11 @@ class SocketPeer extends Peer {
   constructor(socket, room, log) {
     super(room, log)
     this.socket = socket
-    this.alive = true
+    this.missed = 0
+    this.pingSentAt = 0
+    this.rtt = null
+    this.connectedAt = Date.now()
+    this.info = {}
     this.buffer = Buffer.alloc(0)
     this.fragments = []
     this.fragmentOpcode = 0
@@ -238,7 +262,8 @@ class SocketPeer extends Peer {
       case 0x9: // ping
         return this.sendFrame(0xa, payload)
       case 0xa: // pong
-        this.alive = true
+        this.missed = 0
+        if (this.pingSentAt) this.rtt = Date.now() - this.pingSentAt
         return
       default:
         return this.destroy()
@@ -246,11 +271,15 @@ class SocketPeer extends Peer {
   }
 
   onMessage(opcode, payload) {
-    this.alive = true
+    this.missed = 0
     if (opcode === 0x1) {
       let msg
       try { msg = JSON.parse(payload.toString()) } catch { return }
       if (msg?.t === 'hello' && this.id === null) this.join(msg.id)
+      else if (msg?.t === 'info' && this.id !== null) {
+        // The page's self-report (its WebRTC/NAT probe). Shown in the admin panel only.
+        if (NAT_KINDS.has(msg.nat)) this.info.nat = msg.nat
+      }
       return
     }
     if (this.id === null || payload.length < 2) return

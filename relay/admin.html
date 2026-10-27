@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tiny Tanks · Server</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #12110e; --panel: #1b1a16; --line: #2e2c25; --text: #e8e3d6; --muted: #9a958a;
+    --accent: #ffb454; --ok: #7fd18b; --bad: #ff6b6b; --p2p: #9d7bff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 1rem; padding: 1rem 1.25rem; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 1.15rem; letter-spacing: 0.03em; }
+  header h1 span { color: var(--accent); }
+  .status { display: flex; gap: 1.25rem; flex-wrap: wrap; color: var(--muted); font-size: 0.85rem; margin-left: auto; }
+  .status b { color: var(--text); font-weight: 600; }
+  main { max-width: 1100px; margin: 0 auto; padding: 1rem 1.25rem 3rem; display: grid; gap: 1rem; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.1rem; }
+  h2 { margin: 0 0 0.75rem; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+  .row { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+  button, input, select {
+    font: inherit; color: var(--text); background: #26241e; border: 1px solid var(--line); border-radius: 6px; padding: 0.35rem 0.6rem;
+  }
+  input { min-width: 0; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #1a1407; border-color: var(--accent); font-weight: 600; }
+  button.danger { color: var(--bad); }
+  button.danger:hover { border-color: var(--bad); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 0.45rem 1rem; background: transparent; }
+  .seg button.on { background: #2f2c22; color: var(--accent); font-weight: 600; }
+  .hint { color: var(--muted); font-size: 0.85rem; margin: 0.5rem 0 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  th, td { text-align: left; padding: 0.45rem 0.5rem; border-bottom: 1px solid var(--line); vertical-align: middle; white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  th.num { text-align: right; }
+  tr:hover td { background: #201e18; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #4a4740; margin-right: 0.45rem; vertical-align: middle; }
+  .dot.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .name { font-weight: 600; cursor: pointer; }
+  .name:hover { color: var(--accent); }
+  .actions { display: flex; gap: 0.35rem; }
+  .actions button { padding: 0.25rem 0.5rem; font-size: 0.82rem; }
+  .empty { color: var(--muted); padding: 0.75rem 0; }
+  .wrap { overflow-x: auto; }
+  code { background: #26241e; padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.85em; }
+  #toast { position: fixed; bottom: 1.25rem; left: 50%; transform: translateX(-50%); background: #2a2820; border: 1px solid var(--line); border-radius: 8px; padding: 0.6rem 1rem; opacity: 0; transition: opacity 0.2s; pointer-events: none; max-width: 90vw; }
+  #toast.show { opacity: 1; }
+  #toast.bad { border-color: var(--bad); color: var(--bad); }
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 1.25rem; width: min(560px, 92vw); }
+  dialog::backdrop { background: rgba(0,0,0,0.6); }
+  dialog h3 { margin: 0 0 0.9rem; font-size: 1.05rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.5rem 0.9rem; }
+  .field label { display: block; color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.15rem; }
+  .field input { width: 100%; }
+  .parts { display: grid; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 0.3rem; margin: 0.4rem 0; }
+  .parts label { display: flex; align-items: center; gap: 0.3rem; font-size: 0.82rem; background: #26241e; border-radius: 5px; padding: 0.2rem 0.4rem; cursor: pointer; }
+  .parts label.free { opacity: 0.5; cursor: default; }
+  .dialog-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem; flex-wrap: wrap; }
+  .dialog-actions .spacer { flex: 1; }
+  [hidden] { display: none !important; }
+  #locked { display: grid; place-items: center; min-height: 60vh; text-align: center; color: var(--muted); }
+  #locked input { width: 20rem; max-width: 80vw; margin-top: 0.75rem; }
+  .copy { font-family: ui-monospace, monospace; font-size: 0.82rem; background: #26241e; padding: 0.45rem 0.6rem; border-radius: 6px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Tiny <span>Tanks</span> · server</h1>
+  <div class="status" id="status"></div>
+</header>
+
+<div id="locked" hidden>
+  <div>
+    <p>This panel needs the admin key printed in the server terminal.</p>
+    <input id="keyInput" placeholder="paste the admin key" autofocus>
+    <p class="hint">or open the exact address the terminal printed</p>
+  </div>
+</div>
+
+<main id="app" hidden>
+  <section>
+    <h2>Gameplay mode</h2>
+    <div class="row">
+      <div class="seg" id="modeSeg">
+        <button data-mode="relay">Relay — works for everyone</button>
+        <button data-mode="p2p">Peer-to-peer — lowest ping</button>
+      </div>
+      <span class="hint" id="modeHint"></span>
+    </div>
+    <p class="hint">Accounts, XP and coins always go through this server. The mode only decides where match traffic (tank positions, shots) travels. Players already in the game must reload after a switch.</p>
+    <p class="hint" id="p2pReady"></p>
+  </section>
+
+  <section>
+    <h2>Share link</h2>
+    <div class="row">
+      <input id="site" placeholder="your game page, e.g. https://you.github.io/tiny-tanks/" style="flex: 2; min-width: 16rem">
+      <input id="tunnel" placeholder="public host, e.g. brave-lion-1234.trycloudflare.com" style="flex: 2; min-width: 16rem">
+    </div>
+    <div class="row" style="margin-top: 0.5rem">
+      <div class="copy" id="shareLink">—</div>
+      <button id="copyBtn">Copy</button>
+    </div>
+    <p class="hint">The host changes every time you restart the tunnel; paste the new one here. The game page is remembered.</p>
+  </section>
+
+  <section>
+    <h2>Online now <span id="onlineCount"></span></h2>
+    <div class="wrap"><table><thead><tr><th>Connection</th><th>Logged in as</th><th class="num">Ping</th><th>P2P check</th><th class="num">Connected</th></tr></thead><tbody id="online"></tbody></table></div>
+    <p class="hint">Ping is the round trip between that player and this server. The P2P check is a test each player's browser runs on connect: <b>ok</b> = direct connections should work, <b>symmetric NAT</b> = usually needs the TURN fallback and may fail, <b>blocked</b> = no WebRTC at all, relay only.</p>
+  </section>
+
+  <section>
+    <h2>Accounts <span id="accountCount"></span></h2>
+    <div class="wrap">
+      <table>
+        <thead><tr>
+          <th>Player</th><th class="num">XP</th><th class="num">Coins</th><th class="num">K / D</th><th class="num">W / L</th><th class="num">Parts</th><th class="num">Minutes</th><th></th>
+        </tr></thead>
+        <tbody id="accounts"></tbody>
+      </table>
+    </div>
+    <p class="hint">Click a name for everything. Level (and rank: Private → Corporal → Sergeant → … → Colonel) is computed from XP by the game; <b>customtitle</b> replaces the rank on screen; <b>special</b> = 1 is the VIP flag that lets that player change their own title in-game. Changes reach a player the next time they log in.</p>
+  </section>
+</main>
+
+<dialog id="giveDlg">
+  <h3>Give <span class="who"></span></h3>
+  <div class="row">
+    <select id="giveField"><option value="xp">XP</option><option value="coins">Coins</option></select>
+    <input id="giveAmount" type="number" placeholder="amount (negative to take)" style="width: 14rem">
+  </div>
+  <div class="dialog-actions"><button data-close>Cancel</button><button class="primary" id="giveOk">Give</button></div>
+</dialog>
+
+<dialog id="editDlg">
+  <h3>Edit <span class="who"></span></h3>
+  <div class="grid" id="editFields"></div>
+  <h2 style="margin-top: 1rem">Tank parts</h2>
+  <div class="row"><button id="partsAll">Select all</button><button id="partsNone">Clear</button><span class="hint">0, 1, 2, 11, 12, 16 are free starter parts and always owned</span></div>
+  <div class="parts" id="parts"></div>
+  <div class="dialog-actions">
+    <button class="danger" id="pwBtn">Set password…</button>
+    <button class="danger" id="delBtn">Delete account</button>
+    <span class="spacer"></span>
+    <button data-close>Cancel</button><button class="primary" id="editOk">Save</button>
+  </div>
+</dialog>
+
+<div id="toast"></div>
+
+<script>
+(() => {
+  const FREE = new Set([0, 1, 2, 11, 12, 16]);
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  let key = location.hash.slice(1) || sessionStorage.getItem('tt-admin-key') || '';
+  let state = null;
+  let timer = null;
+
+  // -- api ----------------------------------------------------------------------
+  async function api(path, body) {
+    const res = await fetch('/admin/api/' + path, {
+      method: body ? 'POST' : 'GET',
+      headers: { 'x-admin-key': key, ...(body ? { 'content-type': 'application/json' } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) { lock(); throw new Error(data.error || 'unauthorized'); }
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    return data;
+  }
+  async function act(path, body) {
+    try {
+      const data = await api(path, body);
+      if (data.state) render(data.state);
+      toast(data.message || 'done');
+    } catch (e) { toast(e.message, true); }
+  }
+  async function refresh() {
+    try { render(await api('state')); } catch (e) { /* lock() already handled 401 */ }
+  }
+
+  // -- auth gate -----------------------------------------------------------------
+  function lock() {
+    clearInterval(timer); timer = null;
+    $('app').hidden = true; $('locked').hidden = false; $('status').textContent = '';
+    sessionStorage.removeItem('tt-admin-key');
+  }
+  function unlock() {
+    sessionStorage.setItem('tt-admin-key', key);
+    history.replaceState(null, '', location.pathname); // keep the key out of the address bar / history
+    $('locked').hidden = true; $('app').hidden = false;
+    refresh();
+    timer = setInterval(refresh, 3000);
+  }
+  $('keyInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { key = e.target.value.trim(); unlock(); } });
+
+  // -- render --------------------------------------------------------------------
+  function render(s) {
+    state = s;
+    const up = Math.round((Date.now() - s.startedAt) / 60000);
+    const saved = s.lastSaved ? new Date(s.lastSaved).toLocaleTimeString() : 'not yet';
+    $('status').innerHTML =
+      `<span>room <b>${esc(s.room)}</b></span><span>port <b>${s.port}</b></span><span>up <b>${up} min</b></span><span>saved <b>${saved}</b></span>`;
+    for (const b of $('modeSeg').children) b.classList.toggle('on', b.dataset.mode === s.mode);
+    $('modeHint').textContent = s.mode === 'p2p'
+      ? 'Match traffic goes browser-to-browser. If someone can\'t join a match, switch to Relay.'
+      : 'Match traffic goes through this server.';
+
+    $('onlineCount').textContent = `(${s.online.length})`;
+    $('online').innerHTML = s.online.length
+      ? s.online.map((p) => `<tr>
+          <td><code>${esc(p.playerId)}</code></td>
+          <td>${p.accounts.length ? esc(p.accounts.join(', ')) : '<span class="hint">not logged in</span>'}</td>
+          <td class="num">${pingCell(p.rtt)}</td>
+          <td>${natCell(p.nat)}</td>
+          <td class="num">${since(p.connectedAt)}</td></tr>`).join('')
+      : '<tr><td colspan="5" class="empty">Nobody connected. Players appear here when their game page connects to this server.</td></tr>';
+    const stuck = s.online.filter((p) => p.nat === 'symmetric' || p.nat === 'blocked');
+    const pending = s.online.filter((p) => p.nat === 'unknown');
+    const label = (p) => p.accounts.length ? p.accounts.join('/') : p.playerId.slice(0, 6);
+    $('p2pReady').innerHTML = !s.online.length ? ''
+      : stuck.length ? `<b style="color:var(--bad)">Peer-to-peer would leave ${stuck.length} player(s) out:</b> ${esc(stuck.map((p) => `${label(p)} (${p.nat})`).join(', '))}${pending.length ? ` · ${pending.length} still checking` : ''}`
+      : pending.length ? `${pending.length} player(s) still running the P2P check…`
+      : `<b style="color:var(--ok)">All ${s.online.length} connected player(s) passed the P2P check.</b>`;
+
+    $('accountCount').textContent = `(${s.accounts.length})`;
+    $('accounts').innerHTML = s.accounts.length
+      ? s.accounts.map((a) => `<tr>
+          <td><span class="dot ${a.online ? 'on' : ''}"></span><span class="name" data-name="${esc(a.name)}">${esc(a.name)}</span></td>
+          <td class="num">${a.xp}</td><td class="num">${a.coins}</td>
+          <td class="num">${a.kills} / ${a.deaths}</td><td class="num">${a.wins} / ${a.losses}</td>
+          <td class="num">${a.unlocks.length}</td><td class="num">${a.minutesplayed}</td>
+          <td><div class="actions">
+            <button data-give="${esc(a.name)}">Give</button>
+            <button data-edit="${esc(a.name)}">Edit</button>
+            <button data-unlockall="${esc(a.name)}">All parts</button>
+          </div></td></tr>`).join('')
+      : '<tr><td colspan="8" class="empty">No accounts yet. They appear when someone registers in the game.</td></tr>';
+    updateShare();
+  }
+
+  function pingCell(rtt) {
+    if (rtt === null || rtt === undefined) return '<span class="hint">…</span>';
+    const color = rtt < 80 ? 'var(--ok)' : rtt < 180 ? 'var(--accent)' : 'var(--bad)';
+    return `<span style="color:${color}">${rtt} ms</span>`;
+  }
+  function natCell(nat) {
+    return { open: '<span style="color:var(--ok)">ok</span>', symmetric: '<span style="color:var(--accent)">symmetric NAT</span>', blocked: '<span style="color:var(--bad)">blocked</span>' }[nat]
+      || '<span class="hint">checking…</span>';
+  }
+  function since(t) {
+    if (!t) return '';
+    const m = Math.round((Date.now() - t) / 60000);
+    return m < 1 ? 'just now' : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+  }
+
+  // -- mode ----------------------------------------------------------------------
+  $('modeSeg').addEventListener('click', (e) => {
+    const mode = e.target.dataset.mode;
+    if (mode && mode !== state?.mode) act('mode', { mode });
+  });
+
+  // -- share link ----------------------------------------------------------------
+  $('site').value = localStorage.getItem('tt-site') || '';
+  $('tunnel').value = sessionStorage.getItem('tt-tunnel') || '';
+  function updateShare() {
+    const site = $('site').value.trim().replace(/\/+$/, '');
+    const host = $('tunnel').value.trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+    localStorage.setItem('tt-site', site); sessionStorage.setItem('tt-tunnel', host);
+    $('shareLink').textContent = site && host && state ? `${site}/?room=${encodeURIComponent(state.room)}&relay=${host}` : '— fill in both fields —';
+  }
+  $('site').addEventListener('input', updateShare);
+  $('tunnel').addEventListener('input', updateShare);
+  $('copyBtn').addEventListener('click', async () => {
+    const text = $('shareLink').textContent;
+    if (!text.startsWith('http')) return;
+    try { await navigator.clipboard.writeText(text); toast('link copied'); } catch { toast('copy failed - select it manually', true); }
+  });
+
+  // -- account actions -----------------------------------------------------------
+  let current = null;
+  $('accounts').addEventListener('click', (e) => {
+    const t = e.target;
+    if (t.dataset.give) openGive(t.dataset.give);
+    else if (t.dataset.edit || t.dataset.name) openEdit(t.dataset.edit || t.dataset.name);
+    else if (t.dataset.unlockall) act('account', { action: 'unlock', name: t.dataset.unlockall, ids: 'all' });
+  });
+
+  function openGive(name) {
+    current = name;
+    $('giveDlg').querySelector('.who').textContent = name;
+    $('giveAmount').value = '';
+    $('giveDlg').showModal();
+    $('giveAmount').focus();
+  }
+  $('giveOk').addEventListener('click', () => {
+    const amount = Number($('giveAmount').value);
+    if (!amount) return toast('enter an amount', true);
+    $('giveDlg').close();
+    act('account', { action: 'give', name: current, field: $('giveField').value, amount });
+  });
+  $('giveAmount').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('giveOk').click(); });
+
+  function openEdit(name) {
+    const a = state.accounts.find((x) => x.name === name);
+    if (!a) return;
+    current = name;
+    $('editDlg').querySelector('.who').textContent = name;
+    const fields = [...state.numericFields, ...state.textFields];
+    $('editFields').innerHTML = fields.map((f) => `<div class="field"><label>${f}</label><input data-field="${f}" value="${esc(a[f] ?? '')}" ${state.numericFields.includes(f) ? 'type="number" min="0"' : ''}></div>`).join('');
+    $('parts').innerHTML = Array.from({ length: state.itemCount }, (_, id) => {
+      const free = FREE.has(id), owned = free || a.unlocks.includes(id);
+      return `<label class="${free ? 'free' : ''}"><input type="checkbox" value="${id}" ${owned ? 'checked' : ''} ${free ? 'disabled' : ''}>#${id}</label>`;
+    }).join('');
+    $('editDlg').showModal();
+  }
+  $('partsAll').addEventListener('click', () => { for (const c of $('parts').querySelectorAll('input:not(:disabled)')) c.checked = true; });
+  $('partsNone').addEventListener('click', () => { for (const c of $('parts').querySelectorAll('input:not(:disabled)')) c.checked = false; });
+  $('editOk').addEventListener('click', async () => {
+    const a = state.accounts.find((x) => x.name === current);
+    const changes = [];
+    for (const input of $('editFields').querySelectorAll('input')) {
+      const f = input.dataset.field;
+      const before = String(a[f] ?? ''), after = input.value;
+      if (before !== after) changes.push({ action: 'set', name: current, field: f, value: after });
+    }
+    const wanted = [...$('parts').querySelectorAll('input:not(:disabled)')].filter((c) => c.checked).map((c) => Number(c.value));
+    const have = a.unlocks.filter((id) => !FREE.has(id));
+    const add = wanted.filter((id) => !have.includes(id)), remove = have.filter((id) => !wanted.includes(id));
+    if (add.length) changes.push({ action: 'unlock', name: current, ids: add });
+    if (remove.length) changes.push({ action: 'lock', name: current, ids: remove });
+    $('editDlg').close();
+    if (!changes.length) return toast('nothing changed');
+    try {
+      let last;
+      for (const c of changes) last = await api('account', c);
+      if (last?.state) render(last.state);
+      toast(`${changes.length} change(s) saved for ${current}`);
+    } catch (e) { toast(e.message, true); refresh(); }
+  });
+  $('pwBtn').addEventListener('click', () => {
+    const pw = prompt(`New password for ${current}:`);
+    if (pw) { $('editDlg').close(); act('account', { action: 'password', name: current, password: pw }); }
+  });
+  $('delBtn').addEventListener('click', () => {
+    if (confirm(`Delete the account "${current}"? This cannot be undone.`)) { $('editDlg').close(); act('account', { action: 'delete', name: current }); }
+  });
+  for (const b of document.querySelectorAll('[data-close]')) b.addEventListener('click', () => b.closest('dialog').close());
+
+  // -- toast -----------------------------------------------------------------------
+  let toastTimer;
+  function toast(msg, bad = false) {
+    const t = $('toast');
+    t.textContent = msg; t.className = 'show' + (bad ? ' bad' : '');
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.className = ''), 2600);
+  }
+
+  if (key) unlock(); else lock();
+})();
+</script>
+</body>
+</html>

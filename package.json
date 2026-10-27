@@ -9,7 +9,6 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "relay": "node --experimental-transform-types relay/authority.mjs",
-    "relay:plain": "node relay/server.mjs",
     "test": "node --experimental-transform-types test/lib.test.mjs && node --experimental-transform-types test/tiny-tanks.test.mjs && node --experimental-transform-types test/relay.test.mjs"
   },
   "dependencies": {

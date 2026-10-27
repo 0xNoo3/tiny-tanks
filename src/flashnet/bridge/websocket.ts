@@ -40,6 +40,7 @@ class WebSocketBridge extends BaseBridge {
   #reconnect: boolean
   #debug: boolean
   #attempt = 0
+  #lastReport: Record<string, unknown> | null = null
   #resolveReady: () => void = () => {}
   #rejectReady: (error: Error) => void = () => {}
   readonly _ready: Promise<void>
@@ -86,6 +87,7 @@ class WebSocketBridge extends BaseBridge {
           }
           for (const peerId of msg.peers ?? []) this.peerJoined(peerId)
           if (this.#debug) console.log('[flashnet] relay connected, peers:', msg.peers)
+          if (this.#lastReport) ws.send(JSON.stringify({ t: 'info', ...this.#lastReport }))
           this.#resolveReady()
         } else if (msg.t === 'join' && msg.id) {
           this.peerJoined(msg.id)
@@ -125,6 +127,13 @@ class WebSocketBridge extends BaseBridge {
   send(peerId: string, data: Uint8Array): void {
     if (this.closed || !this.peers.has(peerId)) return
     this.#transmit(1, peerId, data)
+  }
+
+  /** Tell the relay something about this client (shown to its operator, e.g. a NAT probe result). Re-sent after reconnects. */
+  report(info: Record<string, unknown>): void {
+    this.#lastReport = { ...this.#lastReport, ...info }
+    const ws = this.#ws
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'info', ...this.#lastReport }))
   }
 
   override broadcast(data: Uint8Array): void {
