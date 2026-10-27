@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tiny Tanks</title>
+    <meta name="description" content="Tiny Tanks (Chaz Robinson, multiplayer.gg), playable again in the browser." />
+    <!-- Only one game lives here: send visitors straight to it, keeping ?room=&relay=. -->
+    <script>location.replace("games/tiny-tanks/" + location.search + location.hash);</script>
+    <noscript><meta http-equiv="refresh" content="0; url=games/tiny-tanks/" /></noscript>
+    <style>
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #12110e; color: #d7e8ee; font: 15px system-ui, sans-serif; }
+    </style>
+  </head>
+  <body>
+    <p>Opening <a href="games/tiny-tanks/">Tiny Tanks</a>&hellip;</p>
+  </body>
+</html>

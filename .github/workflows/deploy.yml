@@ -1,0 +1,57 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      #- name: Run tests
+      #  run: npm test
+
+      - name: Build
+        run: |
+          # Project sites are served under /<repo>/, user/org sites (<user>.github.io) at /.
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          if [[ "$REPO_NAME" == *.github.io ]]; then
+            export BASE_PATH="/"
+          else
+            export BASE_PATH="/${REPO_NAME}/"
+          fi
+          echo "Building with BASE_PATH=$BASE_PATH"
+          npm run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: gh-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

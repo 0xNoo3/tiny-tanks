@@ -1,0 +1,24 @@
+{
+  "name": "tiny-tanks-flashback",
+  "version": "1.0.0",
+  "description": "Tiny Tanks, resurrected in the browser - with an optional owner-run server.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "relay": "node --experimental-transform-types relay/authority.mjs",
+    "relay:plain": "node relay/server.mjs",
+    "test": "node --experimental-transform-types test/lib.test.mjs && node --experimental-transform-types test/tiny-tanks.test.mjs && node --experimental-transform-types test/relay.test.mjs"
+  },
+  "dependencies": {
+    "@ruffle-rs/ruffle": "0.7.0-nightly.2026.10.7",
+    "@trystero-p2p/mqtt": "^0.26.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5"
+  }
+}
