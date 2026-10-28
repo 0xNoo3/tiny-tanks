@@ -24,11 +24,27 @@ import { createHash, randomBytes } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 
 const MAX_PAYLOAD = 1024 * 1024
-/** Ping every connection this often: measures round-trip time and detects dead sockets. */
+/**
+ * Ping every connection this often: measures round-trip time and detects dead
+ * sockets. The ping is a JSON text message, not a WebSocket control frame -
+ * proxies and tunnels (Cloudflare) answer control-frame pings at their edge
+ * instead of forwarding them, so a control-frame pong proves nothing about
+ * the browser.
+ */
 const PING_MS = Number(process.env.RELAY_PING_MS) || 5000
-/** Missed pongs in a row before a connection is considered gone (~20 s at the default). */
-const MAX_MISSED = 4
+/** Missed pongs in a row before a connection is considered gone (~30 s at the default). */
+const MAX_MISSED = 6
 const NAT_KINDS = new Set(['open', 'symmetric', 'blocked', 'unknown'])
+/** Most browsers allowed at once, across all rooms (the in-process authority doesn't count). */
+export const MAX_PLAYERS = Math.max(1, Number(process.env.MAX_PLAYERS) || 10)
+/** A socket that hasn't completed the hello handshake within this time is dropped. */
+const HELLO_TIMEOUT_MS = 10_000
+/** Live count of connected browsers. */
+export function playerCount() {
+  let n = 0
+  for (const members of rooms.values()) for (const peer of members.values()) if (peer instanceof SocketPeer) n++
+  return n
+}
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 
 /** room code -> Map<peerId, Peer> */
@@ -38,7 +54,7 @@ export const rooms = new Map()
 export function peerStats(room, peerId) {
   const peer = rooms.get(room)?.get(peerId)
   if (!(peer instanceof SocketPeer)) return null
-  return { rtt: peer.rtt, nat: peer.info.nat ?? 'unknown', connectedAt: peer.connectedAt }
+  return { rtt: peer.rtt, nat: peer.info.nat ?? 'unknown', mesh: peer.info.mesh ?? null, connectedAt: peer.connectedAt }
 }
 
 /** Start the relay. Returns the http server (call .close() to stop). */
@@ -81,10 +97,10 @@ export function startRelay({ port = Number(process.env.PORT) || 8787, log = defa
     for (const members of rooms.values()) {
       for (const peer of members.values()) {
         if (!(peer instanceof SocketPeer)) continue
-        if (peer.missed >= MAX_MISSED) { peer.destroy(); continue }
+        if (peer.missed >= MAX_MISSED) { log(`- ${peer.id} timed out`); peer.destroy(); continue }
         peer.missed++
         peer.pingSentAt = Date.now()
-        peer.sendFrame(0x9, Buffer.from(String(peer.pingSentAt)))
+        peer.sendJson({ t: 'ping', at: peer.pingSentAt })
       }
     }
   }, PING_MS)
@@ -205,6 +221,9 @@ class SocketPeer extends Peer {
     socket.on('close', () => this.onClose())
     socket.on('error', () => this.destroy())
     socket.setNoDelay(true)
+    this.helloTimer = setTimeout(() => {
+      if (this.id === null) this.destroy()
+    }, HELLO_TIMEOUT_MS)
   }
 
   /** Parse as many complete frames as the buffer holds. */
@@ -261,9 +280,7 @@ class SocketPeer extends Peer {
         return this.destroy()
       case 0x9: // ping
         return this.sendFrame(0xa, payload)
-      case 0xa: // pong
-        this.missed = 0
-        if (this.pingSentAt) this.rtt = Date.now() - this.pingSentAt
+      case 0xa: // control-frame pong: may come from a proxy, so it proves nothing - ignore
         return
       default:
         return this.destroy()
@@ -275,10 +292,22 @@ class SocketPeer extends Peer {
     if (opcode === 0x1) {
       let msg
       try { msg = JSON.parse(payload.toString()) } catch { return }
-      if (msg?.t === 'hello' && this.id === null) this.join(msg.id)
-      else if (msg?.t === 'info' && this.id !== null) {
+      if (msg?.t === 'hello' && this.id === null) {
+        clearTimeout(this.helloTimer)
+        if (playerCount() >= MAX_PLAYERS) {
+          this.log(`x refused a player: server full (${MAX_PLAYERS})`)
+          this.sendJson({ t: 'full', max: MAX_PLAYERS })
+          setTimeout(() => this.destroy(), 200)
+          return
+        }
+        this.join(msg.id)
+      } else if (msg?.t === 'pong') {
+        this.missed = 0
+        if (typeof msg.at === 'number' && msg.at === this.pingSentAt) this.rtt = Date.now() - msg.at
+      } else if (msg?.t === 'info' && this.id !== null) {
         // The page's self-report (its WebRTC/NAT probe). Shown in the admin panel only.
         if (NAT_KINDS.has(msg.nat)) this.info.nat = msg.nat
+        if (typeof msg.mesh === 'string' && /^\d{1,3}\/\d{1,3}$/.test(msg.mesh)) this.info.mesh = msg.mesh
       }
       return
     }
@@ -320,6 +349,7 @@ class SocketPeer extends Peer {
   onClose() {
     if (this.closed) return
     this.closed = true
+    clearTimeout(this.helloTimer)
     this.leaveRoom()
   }
 }

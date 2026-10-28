@@ -7,6 +7,7 @@
  *   GET  /admin/api/state            everything the page shows
  *   POST /admin/api/mode             { mode: "relay" | "p2p" }
  *   POST /admin/api/account          { action, name, ... }  action: set | give | unlock | lock | password | delete
+ *   POST /admin/api/site             { site: "https://you.github.io/tiny-tanks/" }
  *   POST /admin/api/save
  *
  * Every API call carries the key in the `x-admin-key` header.
@@ -74,6 +75,9 @@ export function adminHandler({ key, actions: getActions, log }) {
             break
           case 'save':
             message = actions.save()
+            break
+          case 'site':
+            message = actions.setSite(input.site)
             break
           case 'account': {
             const { action, name } = input

@@ -73,10 +73,20 @@ class WebSocketBridge extends BaseBridge {
 
     ws.onmessage = (event: MessageEvent) => {
       if (typeof event.data === 'string') {
-        let msg: { t?: string; id?: string; peers?: string[] }
+        let msg: { t?: string; id?: string; peers?: string[]; at?: number }
         try {
           msg = JSON.parse(event.data)
         } catch {
+          return
+        }
+        if (msg.t === 'full') {
+          // The relay is at its player limit: give up, don't reconnect.
+          this.#reconnect = false
+          this.#rejectReady(new Error('full'))
+          return
+        }
+        if (msg.t === 'ping') {
+          ws.send(JSON.stringify({ t: 'pong', at: msg.at }))
           return
         }
         if (msg.t === 'hello') {

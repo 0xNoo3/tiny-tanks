@@ -13,6 +13,8 @@
  * Run:   npm run relay          (= node --experimental-transform-types relay/authority.mjs)
  * Env:   PORT=8787  ROOM=lobby  MODE=relay|p2p  DATA=relay/data/tiny-tanks.json
  *        ADMIN_KEY=<secret>     VAULT_POLICY=new-only|ignore|trust
+ *        SITE=https://you.github.io/tiny-tanks/   (the game page; remembered once set)
+ *        TUNNEL=auto|off        PUBLIC_HOST=<host>  (skip the built-in tunnel, use your own)
  *
  * MODE decides where *gameplay* packets travel; accounts always go through here.
  *   relay  every packet via this server - works for everyone, a few ms slower
@@ -23,8 +25,9 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from '
 import { randomBytes } from 'node:crypto'
 import { dirname, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
-import { startRelay, localPeer, rooms, peerStats } from './server.mjs'
+import { startRelay, localPeer, rooms, peerStats, playerCount, MAX_PLAYERS } from './server.mjs'
 import { adminHandler } from './admin.mjs'
+import { startTunnel } from './tunnel.mjs'
 
 // Node's CloseEvent is missing in some versions; the socket layer references it.
 if (typeof globalThis.CloseEvent === 'undefined') {
@@ -46,6 +49,8 @@ const PORT = Number(process.env.PORT) || 8787
 const ROOM = (process.env.ROOM || 'lobby').slice(0, 64)
 const DATA = resolve(process.env.DATA || 'relay/data/tiny-tanks.json')
 const KEY_FILE = resolve(dirname(DATA), 'admin.key')
+const SETTINGS_FILE = resolve(dirname(DATA), 'settings.json')
+const TUNNEL = process.env.TUNNEL === 'off' || process.env.PUBLIC_HOST ? 'off' : 'auto'
 let MODE = process.env.MODE === 'p2p' ? 'p2p' : 'relay'
 const VAULT_POLICY = ['trust', 'new-only', 'ignore'].includes(process.env.VAULT_POLICY) ? process.env.VAULT_POLICY : 'new-only'
 /** Lowest id the relay accepts - host election picks the lowest id, so this peer always hosts. */
@@ -110,6 +115,32 @@ function save(now = false) {
   lastSaved = Date.now()
 }
 
+/** Small owner settings that should survive restarts (currently: the game page URL). */
+function loadSettings() {
+  try {
+    return existsSync(SETTINGS_FILE) ? JSON.parse(readFileSync(SETTINGS_FILE, 'utf8')) : {}
+  } catch {
+    return {}
+  }
+}
+function saveSettings() {
+  mkdirSync(dirname(SETTINGS_FILE), { recursive: true })
+  writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2))
+}
+const settings = loadSettings()
+if (process.env.SITE) settings.site = process.env.SITE
+
+/** The link players open, or null until the public host is known. */
+function shareLink() {
+  const host = publicHost()
+  if (!host) return null
+  const site = (settings.site || '<your game page>').replace(/\/+$/, '')
+  return `${site}/?room=${encodeURIComponent(ROOM)}&relay=${host}`
+}
+function publicHost() {
+  return process.env.PUBLIC_HOST || tunnel?.host || null
+}
+
 /** The admin key: from the environment, else a stored random one so the panel URL stays the same. */
 function adminKey() {
   if (process.env.ADMIN_KEY) return process.env.ADMIN_KEY
@@ -162,10 +193,42 @@ session.on('leave', (peerId) => log(`player left: ${peerId}`))
 setInterval(() => save(true), 60_000).unref()
 
 const accounts = () => game.server?.backend.accounts ?? new Map()
-log(`authoritative Tiny Tanks server ready - room "${ROOM}", mode ${MODE}, ${accounts().size} account(s) in ${DATA}`)
+log(`authoritative Tiny Tanks server ready - room "${ROOM}", mode ${MODE}, up to ${MAX_PLAYERS} players, ${accounts().size} account(s) in ${DATA}`)
 log(`admin panel:  http://localhost:${PORT}/admin#${KEY}`)
-log(`players open  <your site>/?room=${ROOM}&relay=<this server's public host>`)
+if (!settings.site) log(`tip: set your game page once with  SITE=https://you.github.io/tiny-tanks/ npm run relay  (or in the panel) and the share link below will be complete`)
+
+let tunnel = null
+if (TUNNEL === 'auto') {
+  log('starting tunnel (cloudflared) ...')
+  tunnel = startTunnel({
+    port: PORT,
+    log,
+    onHost: (host) => {
+      if (host) {
+        log(`public address: ${host}`)
+        printShareLink()
+      }
+    },
+  })
+} else {
+  log(`tunnel: using PUBLIC_HOST=${process.env.PUBLIC_HOST ?? '(none)'}`)
+  printShareLink()
+}
 if (process.stdin.isTTY) console.log(`type "help" for terminal commands\n`)
+
+function printShareLink() {
+  const link = shareLink()
+  if (link) {
+    console.log('')
+    console.log('  ===================================================================')
+    console.log(`  SHARE THIS LINK WITH YOUR FRIENDS:`)
+    console.log(`  ${link}`)
+    console.log('  ===================================================================')
+    console.log('')
+  } else {
+    log('no public address yet - run `cloudflared tunnel --url http://localhost:' + PORT + '` yourself, or set PUBLIC_HOST=')
+  }
+}
 
 // -- actions: shared by the admin panel and the terminal -----------------------------
 
@@ -182,9 +245,14 @@ const actions = {
       room: ROOM,
       mode: MODE,
       port: PORT,
+      players: playerCount(),
+      maxPlayers: MAX_PLAYERS,
       startedAt,
       lastSaved,
       dataFile: DATA,
+      site: settings.site ?? '',
+      tunnel: { status: TUNNEL === 'off' ? (process.env.PUBLIC_HOST ? 'manual' : 'off') : tunnel?.status ?? 'starting', host: publicHost(), error: tunnel?.error ?? null },
+      shareLink: shareLink(),
       itemCount: ITEM_COUNT,
       numericFields: NUMERIC_FIELDS,
       textFields: TEXT_FIELDS,
@@ -194,6 +262,13 @@ const actions = {
         .map((a) => ({ ...publicAccount(a), online: onlineNames.has(a.name.toLowerCase()) })),
       rooms: [...rooms].map(([room, m]) => ({ room, players: m.size - (room === ROOM ? 1 : 0) })),
     }
+  },
+  setSite(site) {
+    const value = String(site ?? '').trim()
+    if (value && !/^https?:\/\/\S+$/.test(value)) throw new Error('the game page must be a full http(s) URL')
+    settings.site = value
+    saveSettings()
+    return value ? `game page set to ${value}` : 'game page cleared'
   },
   setMode(mode) {
     if (!['relay', 'p2p'].includes(mode)) throw new Error('mode must be relay or p2p')
@@ -291,6 +366,8 @@ const HELP = `
   password <name> <new password>  reset a login
   delete <name>                   remove an account
   mode [relay|p2p]                show or switch where gameplay packets go (players reload)
+  link                            print the share link again
+  site <url>                      set your game page URL (remembered)
   admin                           print the admin panel address again
   rooms / save / quit
   Level is derived from xp by the game; "set <name> xp <n>" is how you change it.
@@ -325,6 +402,10 @@ function run(line) {
       return HELP
     case 'admin':
       return `  http://localhost:${PORT}/admin#${KEY}`
+    case 'link':
+      return shareLink() ? `  ${shareLink()}` : `  no public address yet (tunnel: ${tunnel?.status ?? 'off'}${tunnel?.error ? ' - ' + tunnel.error : ''})`
+    case 'site':
+      return actions.setSite(args.join(' '))
     case 'players': {
       const online = actions.state().online
       return online.length
@@ -374,6 +455,7 @@ function shutdown() {
   if (stopping) return
   stopping = true
   try { save(true) } catch (error) { console.error('save failed:', error.message) }
+  tunnel?.stop()
   log('stopped')
   process.exit(0)
 }

@@ -100,21 +100,24 @@
 
   <section>
     <h2>Share link</h2>
-    <div class="row">
-      <input id="site" placeholder="your game page, e.g. https://you.github.io/tiny-tanks/" style="flex: 2; min-width: 16rem">
-      <input id="tunnel" placeholder="public host, e.g. brave-lion-1234.trycloudflare.com" style="flex: 2; min-width: 16rem">
+    <div class="row" id="tunnelRow">
+      <span class="dot" id="tunnelDot"></span><span id="tunnelText">starting tunnel…</span>
     </div>
-    <div class="row" style="margin-top: 0.5rem">
+    <div class="row" style="margin-top: 0.6rem">
       <div class="copy" id="shareLink">—</div>
-      <button id="copyBtn">Copy</button>
+      <button class="primary" id="copyBtn">Copy link</button>
     </div>
-    <p class="hint">The host changes every time you restart the tunnel; paste the new one here. The game page is remembered.</p>
+    <div class="row" style="margin-top: 0.6rem">
+      <input id="site" placeholder="your game page, e.g. https://you.github.io/tiny-tanks/" style="flex: 1; min-width: 16rem">
+      <button id="siteSave">Save</button>
+    </div>
+    <p class="hint">The server starts a Cloudflare tunnel by itself and fills in the public address. Set your game page once; it's remembered. The address changes every time the server starts, so send the link fresh each play night.</p>
   </section>
 
   <section>
     <h2>Online now <span id="onlineCount"></span></h2>
     <div class="wrap"><table><thead><tr><th>Connection</th><th>Logged in as</th><th class="num">Ping</th><th>P2P check</th><th class="num">Connected</th></tr></thead><tbody id="online"></tbody></table></div>
-    <p class="hint">Ping is the round trip between that player and this server. The P2P check is a test each player's browser runs on connect: <b>ok</b> = direct connections should work, <b>symmetric NAT</b> = usually needs the TURN fallback and may fail, <b>blocked</b> = no WebRTC at all, relay only.</p>
+    <p class="hint">Ping is the round trip between that player and this server. The P2P check is a test each player's browser runs on connect: <b>ok</b> = direct connections should work, <b>symmetric NAT</b> = usually needs the TURN fallback and may fail, <b>blocked</b> = no WebRTC at all, relay only. In peer-to-peer mode, <b>mesh 2/3</b> means that player is directly connected to 2 of the 3 other players - everyone should show all.</p>
   </section>
 
   <section>
@@ -209,7 +212,7 @@
     const up = Math.round((Date.now() - s.startedAt) / 60000);
     const saved = s.lastSaved ? new Date(s.lastSaved).toLocaleTimeString() : 'not yet';
     $('status').innerHTML =
-      `<span>room <b>${esc(s.room)}</b></span><span>port <b>${s.port}</b></span><span>up <b>${up} min</b></span><span>saved <b>${saved}</b></span>`;
+      `<span>room <b>${esc(s.room)}</b></span><span>players <b>${s.players ?? 0}/${s.maxPlayers ?? '?'}</b></span><span>port <b>${s.port}</b></span><span>up <b>${up} min</b></span><span>saved <b>${saved}</b></span>`;
     for (const b of $('modeSeg').children) b.classList.toggle('on', b.dataset.mode === s.mode);
     $('modeHint').textContent = s.mode === 'p2p'
       ? 'Match traffic goes browser-to-browser. If someone can\'t join a match, switch to Relay.'
@@ -221,7 +224,7 @@
           <td><code>${esc(p.playerId)}</code></td>
           <td>${p.accounts.length ? esc(p.accounts.join(', ')) : '<span class="hint">not logged in</span>'}</td>
           <td class="num">${pingCell(p.rtt)}</td>
-          <td>${natCell(p.nat)}</td>
+          <td>${natCell(p.nat)}${s.mode === 'p2p' ? meshCell(p.mesh) : ''}</td>
           <td class="num">${since(p.connectedAt)}</td></tr>`).join('')
       : '<tr><td colspan="5" class="empty">Nobody connected. Players appear here when their game page connects to this server.</td></tr>';
     const stuck = s.online.filter((p) => p.nat === 'symmetric' || p.nat === 'blocked');
@@ -245,7 +248,7 @@
             <button data-unlockall="${esc(a.name)}">All parts</button>
           </div></td></tr>`).join('')
       : '<tr><td colspan="8" class="empty">No accounts yet. They appear when someone registers in the game.</td></tr>';
-    updateShare();
+    updateShare(s);
   }
 
   function pingCell(rtt) {
@@ -256,6 +259,12 @@
   function natCell(nat) {
     return { open: '<span style="color:var(--ok)">ok</span>', symmetric: '<span style="color:var(--accent)">symmetric NAT</span>', blocked: '<span style="color:var(--bad)">blocked</span>' }[nat]
       || '<span class="hint">checking…</span>';
+  }
+  function meshCell(mesh) {
+    if (!mesh) return ' <span class="hint">· mesh …</span>';
+    const [have, want] = mesh.split('/').map(Number);
+    const color = want === 0 ? 'var(--muted)' : have >= want ? 'var(--ok)' : have > 0 ? 'var(--accent)' : 'var(--bad)';
+    return ` <span style="color:${color}" title="direct connections to the other players">· mesh ${mesh}</span>`;
   }
   function since(t) {
     if (!t) return '';
@@ -270,19 +279,34 @@
   });
 
   // -- share link ----------------------------------------------------------------
-  $('site').value = localStorage.getItem('tt-site') || '';
-  $('tunnel').value = sessionStorage.getItem('tt-tunnel') || '';
-  function updateShare() {
-    const site = $('site').value.trim().replace(/\/+$/, '');
-    const host = $('tunnel').value.trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
-    localStorage.setItem('tt-site', site); sessionStorage.setItem('tt-tunnel', host);
-    $('shareLink').textContent = site && host && state ? `${site}/?room=${encodeURIComponent(state.room)}&relay=${host}` : '— fill in both fields —';
+  let siteEdited = false;
+  $('site').addEventListener('input', () => (siteEdited = true));
+  $('siteSave').addEventListener('click', async () => {
+    siteEdited = false;
+    await act('site', { site: $('site').value.trim() });
+  });
+  $('site').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('siteSave').click(); });
+  function updateShare(s) {
+    if (!siteEdited && document.activeElement !== $('site')) $('site').value = s.site || '';
+    const t = s.tunnel || {};
+    const dot = $('tunnelDot'), text = $('tunnelText');
+    dot.className = 'dot' + (t.host ? ' on' : '');
+    text.textContent =
+      t.host ? `public address: ${t.host}` :
+      t.status === 'starting' ? 'starting tunnel… (usually 5-15 s)' :
+      t.status === 'unavailable' ? `tunnel unavailable - ${t.error || ''}` :
+      t.status === 'down' ? `tunnel went down - ${t.error || ''} (restart the server)` :
+      t.status === 'off' ? 'tunnel off (set PUBLIC_HOST= or TUNNEL=auto)' : t.status;
+    const ready = !!s.shareLink && !!s.site;
+    $('shareLink').textContent = s.shareLink
+      ? (s.site ? s.shareLink : s.shareLink + '   ← set your game page below')
+      : '— waiting for the public address —';
+    $('shareLink').style.color = ready ? '' : 'var(--muted)';
+    $('copyBtn').disabled = !ready;
   }
-  $('site').addEventListener('input', updateShare);
-  $('tunnel').addEventListener('input', updateShare);
   $('copyBtn').addEventListener('click', async () => {
-    const text = $('shareLink').textContent;
-    if (!text.startsWith('http')) return;
+    const text = state?.shareLink;
+    if (!text || !state.site) return;
     try { await navigator.clipboard.writeText(text); toast('link copied'); } catch { toast('copy failed - select it manually', true); }
   });
 

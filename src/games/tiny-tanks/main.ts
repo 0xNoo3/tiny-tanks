@@ -1,5 +1,4 @@
-import { createSession, trysteroBridge, VirtualNetwork, websocketBridge } from "../../flashnet/index.ts";
-import { joinRoom, selfId as p2pId } from "@trystero-p2p/mqtt";
+import { createSession, VirtualNetwork, webrtcMeshBridge, websocketBridge } from "../../flashnet/index.ts";
 import { GAME_VERSION } from "./backend.ts";
 import { BACKEND_ENDPOINT, tinyTanks } from "./game.ts";
 import { RtmfpRouter } from "./rtmfp.ts";
@@ -200,7 +199,11 @@ const net = new VirtualNetwork({ debug });
 const bridge = await Promise.race([
   websocketBridge({ relay, room: roomCode, debug }),
   new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 10_000)),
-]).catch(() => halt("Can't reach the server", `No answer from ${relay}. The host may have stopped the server, or the link is from an earlier session.`));
+]).catch((error: unknown) =>
+  error instanceof Error && error.message === "full"
+    ? halt("The server is full", "All player slots are taken right now. Try again in a bit.")
+    : halt("Can't reach the server", `No answer from ${relay}. The host may have stopped the server, or the link is from an earlier session.`),
+);
 if (debug) console.log("[tiny-tanks] accounts via", relay, "- gameplay:", gameplayMode);
 const session = await createSession(tinyTanks({ debug }), {
   net,
@@ -263,42 +266,38 @@ void probeNat().then((nat) => {
 /**
  * Where the match itself (tank positions, shots - the emulated Cirrus streams)
  * travels. "relay": over the same connection as everything else, through the
- * server. "p2p": a second, browser-to-browser WebRTC mesh; the room name is
- * scoped to this server so two owners' games never meet. STUN-only WebRTC
- * fails behind carrier-grade NAT, hence the TURN entries; the Open Relay
+ * server. "p2p": a WebRTC mesh between the browsers - signaled over the server
+ * connection (so no public broker is involved), game data then direct. STUN
+ * alone fails behind carrier-grade NAT, hence the TURN entries; the Open Relay
  * Project ones are free but shared - a metered.ca account gives you your own.
  */
 const gameplayBridge =
   gameplayMode === "p2p"
-    ? trysteroBridge({
-        selfId: p2pId,
-        room: joinRoom(
-          {
-            appId: "tiny-tanks-gameplay",
-            rtcConfig: {
-              iceServers: [
-                { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
-                { urls: "stun:stun.relay.metered.ca:80" },
-                {
-                  urls: [
-                    "turn:global.relay.metered.ca:80",
-                    "turn:global.relay.metered.ca:80?transport=tcp",
-                    "turn:global.relay.metered.ca:443",
-                    "turns:global.relay.metered.ca:443?transport=tcp",
-                  ],
-                  username: "openrelayproject",
-                  credential: "openrelayproject",
-                },
+    ? webrtcMeshBridge({
+        signal: session.bridge,
+        debug,
+        rtcConfig: {
+          iceServers: [
+            { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
+            { urls: "stun:stun.relay.metered.ca:80" },
+            {
+              urls: [
+                "turn:global.relay.metered.ca:80",
+                "turn:global.relay.metered.ca:80?transport=tcp",
+                "turn:global.relay.metered.ca:443",
+                "turns:global.relay.metered.ca:443?transport=tcp",
               ],
+              username: "openrelayproject",
+              credential: "openrelayproject",
             },
-          },
-          `${roomCode}@${relay}`,
-        ),
+          ],
+        },
+        onStats: ({ connected, wanted }) => bridge.report({ mesh: `${connected}/${wanted}` }),
       })
     : session.bridge;
 if (debug && gameplayMode === "p2p") {
-  gameplayBridge.on("join", (peerId) => console.log("[tiny-tanks] p2p peer joined:", peerId));
-  gameplayBridge.on("leave", (peerId) => console.log("[tiny-tanks] p2p peer left:", peerId));
+  gameplayBridge.on("join", (peerId) => console.log("[tiny-tanks] p2p peer connected:", peerId));
+  gameplayBridge.on("leave", (peerId) => console.log("[tiny-tanks] p2p peer gone:", peerId));
 }
 const router = new RtmfpRouter({ net, bridge: gameplayBridge, debug });
 const backendProxy = session.ruffleConfig().socketProxy.find(

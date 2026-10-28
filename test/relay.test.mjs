@@ -30,10 +30,12 @@ const DATA = join(dir, 'tiny-tanks.json')
 
 let server = null
 let output = ''
+process.on('uncaughtException', (e) => { server?.kill('SIGKILL'); console.error(e); process.exit(1) })
+process.on('unhandledRejection', (e) => { server?.kill('SIGKILL'); console.error(e); process.exit(1) })
 async function startAuthority() {
   output = ''
   server = spawn(process.execPath, ['--experimental-transform-types', 'relay/authority.mjs'], {
-    env: { ...process.env, PORT: String(PORT), ROOM: 'test', DATA, ADMIN_KEY: 'test-key', RELAY_PING_MS: '200' },
+    env: { ...process.env, PORT: String(PORT), ROOM: 'test', DATA, ADMIN_KEY: 'test-key', RELAY_PING_MS: '200', PUBLIC_HOST: 'test.example.com', MAX_PLAYERS: '2' },
     stdio: ['pipe', 'pipe', 'pipe'],
   })
   server.stdout.on('data', (d) => (output += d))
@@ -142,8 +144,23 @@ const admin_api = async (path, body, keyHeader = 'test-key') => {
   return { status: res.status, data: await res.json() }
 }
 assert.equal((await fetch(`http://localhost:${PORT}/admin`)).status, 200, 'panel page served')
-assert.equal((await admin_api('state', null, 'wrong')).status, 401, 'key required')
+// player cap: a third browser is refused with "full" and the page can tell
+await assert.rejects(websocketBridge({ relay: `localhost:${PORT}`, room: 'test', selfId: 'dddddddddddddddd' }), /full/)
+assert.equal((await admin_api('state')).data.players, 2)
+assert.equal((await admin_api('state')).data.maxPlayers, 2)
+
+// share link: built from the public host and the remembered game page
 let st = (await admin_api('state')).data
+assert.equal(st.tunnel.status, 'manual')
+assert.equal(st.tunnel.host, 'test.example.com')
+assert.equal(st.site, '')
+assert.equal((await admin_api('site', { site: 'not a url' })).status, 400)
+st = (await admin_api('site', { site: 'https://me.github.io/tiny-tanks/' })).data.state
+assert.equal(st.shareLink, 'https://me.github.io/tiny-tanks/?room=test&relay=test.example.com')
+assert.match(await admin('link'), /me\.github\.io\/tiny-tanks\/\?room=test&relay=test\.example\.com/)
+
+assert.equal((await admin_api('state', null, 'wrong')).status, 401, 'key required')
+st = (await admin_api('state')).data
 assert.equal(st.mode, 'relay')
 assert.ok(st.accounts.some((x) => x.name === 'Alice' && x.online === true), 'alice listed and online')
 assert.ok(!('passwordHash' in st.accounts[0]), 'hashes never leave the server')
@@ -203,6 +220,7 @@ await startAuthority()
 const c = await browser('cccccccccccccccc')
 await sleep(300)
 assert.equal(c.session.hostId, '00000000')
+assert.equal((await admin_api('state')).data.site, 'https://me.github.io/tiny-tanks/', 'game page remembered across restarts')
 assert.equal(vars(await c.php('account9.php', { task: '1', usernameoremail: 'alice', password: 'newpw' })).code, '0')
 assert.equal((await data(c, 'Alice')).coins, '5000', 'account restored from file after restart')
 c.close()

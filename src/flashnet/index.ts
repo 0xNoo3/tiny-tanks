@@ -21,6 +21,8 @@ export { trysteroBridge } from './bridge/trystero.ts'
 export type { TrysteroBridgeOptions, TrysteroRoomLike } from './bridge/trystero.ts'
 export { websocketBridge } from './bridge/websocket.ts'
 export type { WebSocketBridgeOptions } from './bridge/websocket.ts'
+export { webrtcMeshBridge } from './bridge/webrtc-mesh.ts'
+export type { WebRtcMeshOptions } from './bridge/webrtc-mesh.ts'
 export { playerioBridge } from './bridge/playerio.ts'
 export type {
   PlayerIOBridgeOptions,

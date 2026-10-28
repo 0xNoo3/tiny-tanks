@@ -23,7 +23,7 @@ your tunnel is up. The key is generated once and stored in
 The panel shows:
 
 - **Gameplay mode** - a switch between Relay and Peer-to-peer (details below).
-- **Share link** - paste your game page and tonight's tunnel host, copy the link.
+- **Share link** - tonight's link, filled in by the server once its tunnel is up; one Copy button.
 - **Online now** - every connected browser: which account it's logged into,
   its **ping** to this server, and a **P2P check**. The check is a test each
   player's browser runs on connect (it asks two STUN servers how it looks from
@@ -72,9 +72,17 @@ itself (tank positions, shots) travels is up to you:
 Start in Relay when unsure. Once everyone is connected, look at the P2P
 check in the panel: if it says all passed, flip to Peer-to-peer and players
 reload; if anyone is flagged, stay on Relay. The check is a strong hint, not
-a guarantee - if someone still can't get into a match, switch back. In Peer-to-peer a free
-shared TURN relay is the fallback for difficult networks - it helps but isn't
-guaranteed.
+a guarantee - if someone still can't get into a match, switch back. In
+Peer-to-peer a free shared TURN relay is the fallback for difficult networks -
+it helps but isn't guaranteed.
+
+In Peer-to-peer the browsers find each other **through your server** (it
+carries the WebRTC handshake), so no public signaling service is involved;
+only the game packets themselves go direct. The panel then shows each player's
+**mesh**, e.g. `mesh 2/3` = directly connected to 2 of the 3 other players.
+Everyone should show the full count within a few seconds of joining; a player
+stuck below it can't reach some others and will fail to join their matches -
+switch to Relay for that night.
 
 ## Play night, step by step
 
@@ -82,31 +90,34 @@ guaranteed.
 
        npm run relay
 
-   You'll see `authoritative Tiny Tanks server ready` and a `tanks>` prompt.
-   Leave it running.
+   It starts the game backend, the admin panel, and - if `cloudflared` is
+   installed - a Cloudflare tunnel that makes it reachable from the internet.
+   After a few seconds it prints:
 
-2. **Make it reachable from the internet.** Easiest: a free Cloudflare quick
-   tunnel, no account needed. Install `cloudflared` once
-   (https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/),
-   then in a second terminal:
+       SHARE THIS LINK WITH YOUR FRIENDS:
+       https://you.github.io/tiny-tanks/?room=lobby&relay=brave-lion-1234.trycloudflare.com
 
-       cloudflared tunnel --url http://localhost:8787
+   The same link, with a Copy button, is at the top of the admin panel.
 
-   It prints a URL like `https://brave-lion-1234.trycloudflare.com`. Copy the
-   host part. It changes every time you start the tunnel. (ngrok works too:
-   `ngrok http 8787`.)
+2. **Send the link.** It changes every time the server starts (the tunnel
+   gets a new address), so send it fresh each night. Add `&debug` for
+   connection logs in the browser console (F12).
 
-3. **Share the link.** Everyone opens:
+3. When you're done: type `quit` at the `tanks>` prompt or press Ctrl+C
+   (both save and close the tunnel).
 
-       https://<you>.github.io/<repo>/?room=lobby&relay=brave-lion-1234.trycloudflare.com
+**One-time setup.** Install `cloudflared` (free, no account):
+https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/
+- Ubuntu/Debian: download the `.deb` from that page, `sudo dpkg -i cloudflared*.deb`
+- macOS: `brew install cloudflared` · Windows: `winget install Cloudflare.cloudflared`
 
-   `room` must be the room the server hosts (`lobby` unless you set `ROOM=`).
-   Add `&debug` to see connection logs in the browser console (F12).
+And tell the server your game page once, so the link is complete - either
+`SITE=https://you.github.io/tiny-tanks/ npm run relay`, the `site` console
+command, or the box in the panel. It's remembered in `relay/data/settings.json`.
 
-   (Or fill the two boxes under **Share link** in the admin panel and press Copy.)
-
-4. When you're done: type `quit` at the `tanks>` prompt or press Ctrl+C (both
-   save), close the tunnel.
+**Without cloudflared** (or with ngrok etc.): run your own tunnel and start
+the server with `PUBLIC_HOST=<its host> npm run relay`; the built-in tunnel
+is then skipped. `TUNNEL=off` disables it entirely.
 
 ## Terminal console
 
@@ -124,6 +135,8 @@ lock <name> all | <id ...>      take parts away (the free starter parts always s
 password <name> <new password>  reset a login
 delete <name>                   remove an account
 mode [relay|p2p]                show or switch gameplay mode (players reload)
+link                            print the share link again
+site <url>                      set your game page URL (remembered)
 admin                           print the admin panel address again
 rooms / save / quit
 ```
@@ -148,8 +161,12 @@ from the panel's Edit dialog if you want to let someone pick their own.
 ## Settings (environment variables)
 
 - `PORT` - listen port, default `8787`
+- `MAX_PLAYERS` - most browsers allowed at once, default `10`; extra ones see "server is full"
 - `MODE` - `relay` (default) or `p2p`, see above
 - `ADMIN_KEY` - the admin panel key (default: random, stored in `relay/data/admin.key`)
+- `SITE` - your game page URL (remembered in `relay/data/settings.json`)
+- `TUNNEL` - `auto` (default: start cloudflared) or `off`
+- `PUBLIC_HOST` - use this public address instead of starting a tunnel
 - `RELAY_PING_MS` - how often each connection is pinged for the ping display, default 5000
 - `ROOM` - the room the server hosts, default `lobby`; the link's `?room=` must match
 - `DATA` - where accounts are saved, default `relay/data/tiny-tanks.json`
