@@ -186,7 +186,12 @@ function httpUrl(host: string): string {
 
 // First contact: the server says which room it hosts and where gameplay packets
 // should travel ("relay": through it; "p2p": browser-to-browser over WebRTC).
-const info = await fetch(httpUrl(relay), { signal: AbortSignal.timeout(8000), cache: "no-store" })
+const info = await fetch(httpUrl(relay), {
+  signal: AbortSignal.timeout(8000),
+  cache: "no-store",
+  // ngrok's free tier answers browser-looking requests with a warning page unless told not to.
+  headers: { "ngrok-skip-browser-warning": "1" },
+})
   .then((response) => response.json() as Promise<{ game?: string; room?: string; mode?: string }>)
   .catch(() => halt("Can't reach the server", `No answer from ${relay}. The host may have stopped the server, or the link is from an earlier session.`));
 if (info.game !== "tiny-tanks") halt("That's not a Tiny Tanks server", `${relay} answered, but it isn't running the Tiny Tanks server.`);

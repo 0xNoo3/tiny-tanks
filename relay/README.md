@@ -86,13 +86,14 @@ switch to Relay for that night.
 
 ## Play night, step by step
 
-1. **Start the server** in a terminal inside the project folder:
+1. **Start the server** in a terminal inside the project folder, with the
+   tunnel of your choice:
 
-       npm run relay
+       npm run server     # ngrok tunnel (you pick the region; usually the lower ping)
+       npm run relay      # Cloudflare quick tunnel (no account; the datacenter is Cloudflare's pick)
 
-   It starts the game backend, the admin panel, and - if `cloudflared` is
-   installed - a Cloudflare tunnel that makes it reachable from the internet.
-   After a few seconds it prints:
+   It starts the game backend, the admin panel, and the tunnel that makes it
+   reachable from the internet. After a few seconds it prints:
 
        SHARE THIS LINK WITH YOUR FRIENDS:
        https://you.github.io/tiny-tanks/?room=lobby&relay=brave-lion-1234.trycloudflare.com
@@ -106,18 +107,34 @@ switch to Relay for that night.
 3. When you're done: type `quit` at the `tanks>` prompt or press Ctrl+C
    (both save and close the tunnel).
 
-**One-time setup.** Install `cloudflared` (free, no account):
+**One-time setup - ngrok** (`npm run server`): free account at
+https://ngrok.com, install it (Windows: `winget install ngrok.ngrok`; others:
+https://ngrok.com/download), then run the `ngrok config add-authtoken ...`
+line shown on your ngrok dashboard once. Region defaults to `in` (Mumbai);
+set `NGROK_REGION=ap` (Singapore), `eu`, `us`, `jp`, `au` or `sa` to change
+it. The free tier allows a handful of connections and ~1 GB/month - fine for
+a group of friends. Players never see ngrok's "visit site" page; the game
+page skips it.
+
+**One-time setup - Cloudflare** (`npm run relay`): install `cloudflared`
+(free, no account):
 https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/
 - Ubuntu/Debian: download the `.deb` from that page, `sudo dpkg -i cloudflared*.deb`
 - macOS: `brew install cloudflared` · Windows: `winget install Cloudflare.cloudflared`
+
+**Which one?** Check your own row in the panel after opening the *tunnel*
+link yourself: that ping is what the tunnel alone adds for everyone. Under
+~80 ms is good; 200+ means that provider routed you far away tonight - try
+the other one. (Your own play link should use `relay=localhost:8787`
+instead, which skips the tunnel entirely.)
 
 And tell the server your game page once, so the link is complete - either
 `SITE=https://you.github.io/tiny-tanks/ npm run relay`, the `site` console
 command, or the box in the panel. It's remembered in `relay/data/settings.json`.
 
-**Without cloudflared** (or with ngrok etc.): run your own tunnel and start
-the server with `PUBLIC_HOST=<its host> npm run relay`; the built-in tunnel
-is then skipped. `TUNNEL=off` disables it entirely.
+**Your own tunnel**: run anything you like and start the server with
+`PUBLIC_HOST=<its host> npm run relay`; the built-in tunnel is then skipped.
+`TUNNEL=off` disables it entirely.
 
 ## Terminal console
 
@@ -165,7 +182,8 @@ from the panel's Edit dialog if you want to let someone pick their own.
 - `MODE` - `relay` (default) or `p2p`, see above
 - `ADMIN_KEY` - the admin panel key (default: random, stored in `relay/data/admin.key`)
 - `SITE` - your game page URL (remembered in `relay/data/settings.json`)
-- `TUNNEL` - `auto` (default: start cloudflared) or `off`
+- `TUNNEL` - `cloudflare` (default), `ngrok` or `off`; `npm run server` / `npm run relay` set it for you
+- `NGROK_REGION` - ngrok region, default `in` (Mumbai)
 - `PUBLIC_HOST` - use this public address instead of starting a tunnel
 - `RELAY_PING_MS` - how often each connection is pinged for the ping display, default 5000
 - `ROOM` - the room the server hosts, default `lobby`; the link's `?room=` must match

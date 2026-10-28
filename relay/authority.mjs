@@ -14,7 +14,7 @@
  * Env:   PORT=8787  ROOM=lobby  MODE=relay|p2p  DATA=relay/data/tiny-tanks.json
  *        ADMIN_KEY=<secret>     VAULT_POLICY=new-only|ignore|trust
  *        SITE=https://you.github.io/tiny-tanks/   (the game page; remembered once set)
- *        TUNNEL=auto|off        PUBLIC_HOST=<host>  (skip the built-in tunnel, use your own)
+ *        TUNNEL=cloudflare|ngrok|off   NGROK_REGION=in   PUBLIC_HOST=<host> (your own tunnel)
  *
  * MODE decides where *gameplay* packets travel; accounts always go through here.
  *   relay  every packet via this server - works for everyone, a few ms slower
@@ -50,7 +50,8 @@ const ROOM = (process.env.ROOM || 'lobby').slice(0, 64)
 const DATA = resolve(process.env.DATA || 'relay/data/tiny-tanks.json')
 const KEY_FILE = resolve(dirname(DATA), 'admin.key')
 const SETTINGS_FILE = resolve(dirname(DATA), 'settings.json')
-const TUNNEL = process.env.TUNNEL === 'off' || process.env.PUBLIC_HOST ? 'off' : 'auto'
+const TUNNEL = process.env.PUBLIC_HOST || process.env.TUNNEL === 'off' ? 'off' : process.env.TUNNEL === 'ngrok' ? 'ngrok' : 'cloudflare'
+const NGROK_REGION = process.env.NGROK_REGION || 'in' // Mumbai; ap = Singapore, eu, us, jp, au, sa
 let MODE = process.env.MODE === 'p2p' ? 'p2p' : 'relay'
 const VAULT_POLICY = ['trust', 'new-only', 'ignore'].includes(process.env.VAULT_POLICY) ? process.env.VAULT_POLICY : 'new-only'
 /** Lowest id the relay accepts - host election picks the lowest id, so this peer always hosts. */
@@ -198,9 +199,11 @@ log(`admin panel:  http://localhost:${PORT}/admin#${KEY}`)
 if (!settings.site) log(`tip: set your game page once with  SITE=https://you.github.io/tiny-tanks/ npm run relay  (or in the panel) and the share link below will be complete`)
 
 let tunnel = null
-if (TUNNEL === 'auto') {
-  log('starting tunnel (cloudflared) ...')
+if (TUNNEL !== 'off') {
+  log(`starting tunnel (${TUNNEL === 'ngrok' ? `ngrok, region ${NGROK_REGION}` : 'cloudflared'}) ...`)
   tunnel = startTunnel({
+    provider: TUNNEL,
+    region: TUNNEL === 'ngrok' ? NGROK_REGION : null,
     port: PORT,
     log,
     onHost: (host) => {
@@ -251,7 +254,7 @@ const actions = {
       lastSaved,
       dataFile: DATA,
       site: settings.site ?? '',
-      tunnel: { status: TUNNEL === 'off' ? (process.env.PUBLIC_HOST ? 'manual' : 'off') : tunnel?.status ?? 'starting', host: publicHost(), error: tunnel?.error ?? null },
+      tunnel: { provider: TUNNEL === 'off' ? (process.env.PUBLIC_HOST ? 'manual' : 'off') : TUNNEL, status: TUNNEL === 'off' ? (process.env.PUBLIC_HOST ? 'manual' : 'off') : tunnel?.status ?? 'starting', host: publicHost(), error: tunnel?.error ?? null },
       shareLink: shareLink(),
       itemCount: ITEM_COUNT,
       numericFields: NUMERIC_FIELDS,

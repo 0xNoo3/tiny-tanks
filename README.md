@@ -12,8 +12,8 @@ this exists so it can still be played.
 ## How playing works
 
 The game runs **only while the owner's server is up**. You start
-`npm run relay` on your PC; it opens a free Cloudflare tunnel by itself and
-prints the link to share (`?room=lobby&relay=<host>`). Everyone's
+`npm run server` (ngrok) or `npm run relay` (Cloudflare) on your PC; it opens
+the tunnel by itself and prints the link to share (`?room=lobby&relay=<host>`). Everyone's
 browser connects to your server. Match traffic goes through the server too
 (works for everyone) or, if you start it with `MODE=p2p`, browser-to-browser
 over WebRTC for the lowest ping.
@@ -48,7 +48,8 @@ one, point Cloudflare Pages or Netlify at the repo instead: build command
 ```
 npm install
 npm run dev          # http://localhost:5173 (add ?room=x&relay=localhost:8787 to use a local server)
-npm run relay        # owner-run server + admin console on port 8787
+npm run server       # owner-run server + admin console on port 8787, ngrok tunnel
+npm run relay        # same, Cloudflare quick tunnel
 npm test
 npm run build
 ```

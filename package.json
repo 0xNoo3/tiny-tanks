@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "relay": "node relay/start.mjs",
+    "relay": "node relay/start.mjs --tunnel cloudflare",
+    "server": "node relay/start.mjs --tunnel ngrok",
     "test": "node --import ./relay/ts-register.mjs test/lib.test.mjs && node --import ./relay/ts-register.mjs test/tiny-tanks.test.mjs && node --import ./relay/ts-register.mjs test/relay.test.mjs"
   },
   "dependencies": {

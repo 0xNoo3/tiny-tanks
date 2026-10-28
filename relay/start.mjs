@@ -15,11 +15,17 @@ if (major < 22 || (major === 22 && minor < 13)) {
   process.exit(1)
 }
 
+// `--tunnel ngrok|cloudflare|off` on the command line = TUNNEL env (so npm scripts work on Windows too).
+const argv = process.argv.slice(2)
+const env = { ...process.env }
+const t = argv.indexOf('--tunnel')
+if (t !== -1 && argv[t + 1]) env.TUNNEL = argv[t + 1]
+
 const child = spawn(
   process.execPath,
   // --import takes a URL, not a path (a Windows path like D:\\... would be read as protocol "d:").
   ['--no-warnings=ExperimentalWarning', '--import', pathToFileURL(join(here, 'ts-register.mjs')).href, join(here, 'authority.mjs')],
-  { stdio: 'inherit', env: process.env },
+  { stdio: 'inherit', env },
 )
 child.on('exit', (code, signal) => process.exit(code ?? (signal ? 1 : 0)))
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => child.kill(sig))

@@ -111,7 +111,7 @@
       <input id="site" placeholder="your game page, e.g. https://you.github.io/tiny-tanks/" style="flex: 1; min-width: 16rem">
       <button id="siteSave">Save</button>
     </div>
-    <p class="hint">The server starts a Cloudflare tunnel by itself and fills in the public address. Set your game page once; it's remembered. The address changes every time the server starts, so send the link fresh each play night.</p>
+    <p class="hint">The server starts the tunnel by itself (<code>npm run relay</code> = Cloudflare, <code>npm run server</code> = ngrok) and fills in the public address. Set your game page once; it's remembered. The address changes every time the server starts, so send the link fresh each play night.</p>
   </section>
 
   <section>
@@ -292,7 +292,7 @@
     const dot = $('tunnelDot'), text = $('tunnelText');
     dot.className = 'dot' + (t.host ? ' on' : '');
     text.textContent =
-      t.host ? `public address: ${t.host}` :
+      t.host ? `public address: ${t.host}${t.provider && t.provider !== 'manual' ? ` (${t.provider})` : ''}` :
       t.status === 'starting' ? 'starting tunnel… (usually 5-15 s)' :
       t.status === 'unavailable' ? `tunnel unavailable - ${t.error || ''}` :
       t.status === 'down' ? `tunnel went down - ${t.error || ''} (restart the server)` :
