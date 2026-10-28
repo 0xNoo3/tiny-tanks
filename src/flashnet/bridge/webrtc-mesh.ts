@@ -84,7 +84,8 @@ export class WebRtcMeshBridge extends BaseBridge {
   send(peerId: string, data: Uint8Array): void {
     if (this.closed) return
     const channel = this.#links.get(peerId)?.channel
-    if (channel && channel.readyState === 'open') channel.send(data)
+    // Copy into a plain ArrayBuffer: RTCDataChannel.send() is typed for ArrayBuffer-backed views only.
+    if (channel && channel.readyState === 'open') channel.send(data.slice().buffer as ArrayBuffer)
   }
 
   protected onClose(): void {
