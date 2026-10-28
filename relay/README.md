@@ -6,7 +6,7 @@ an **admin panel in your browser**, and a terminal console. The game page
 refuses to run without it, so nobody can play - or hold accounts - except
 through you.
 
-Needs Node.js 22.7 or newer; no `npm install`.
+Needs Node.js 22.13 or newer (any later version works - the launcher transforms the TypeScript sources itself, no flags); no `npm install`.
 
 ## The admin panel
 

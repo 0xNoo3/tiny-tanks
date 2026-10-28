@@ -392,6 +392,8 @@ rl.on('line', (line) => {
 rl.on('close', () => {
   if (process.stdin.isTTY) shutdown()
 })
+process.on('SIGINT', () => shutdown())
+process.on('SIGTERM', () => shutdown())
 
 function run(line) {
   if (!line) return ''

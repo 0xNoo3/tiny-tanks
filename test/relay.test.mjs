@@ -34,7 +34,7 @@ process.on('uncaughtException', (e) => { server?.kill('SIGKILL'); console.error(
 process.on('unhandledRejection', (e) => { server?.kill('SIGKILL'); console.error(e); process.exit(1) })
 async function startAuthority() {
   output = ''
-  server = spawn(process.execPath, ['--experimental-transform-types', 'relay/authority.mjs'], {
+  server = spawn(process.execPath, ['--no-warnings=ExperimentalWarning', '--import', './relay/ts-register.mjs', 'relay/authority.mjs'], {
     env: { ...process.env, PORT: String(PORT), ROOM: 'test', DATA, ADMIN_KEY: 'test-key', RELAY_PING_MS: '200', PUBLIC_HOST: 'test.example.com', MAX_PLAYERS: '2' },
     stdio: ['pipe', 'pipe', 'pipe'],
   })

@@ -8,8 +8,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "relay": "node --experimental-transform-types relay/authority.mjs",
-    "test": "node --experimental-transform-types test/lib.test.mjs && node --experimental-transform-types test/tiny-tanks.test.mjs && node --experimental-transform-types test/relay.test.mjs"
+    "relay": "node relay/start.mjs",
+    "test": "node --import ./relay/ts-register.mjs test/lib.test.mjs && node --import ./relay/ts-register.mjs test/tiny-tanks.test.mjs && node --import ./relay/ts-register.mjs test/relay.test.mjs"
   },
   "dependencies": {
     "@ruffle-rs/ruffle": "0.7.0-nightly.2026.10.7",
